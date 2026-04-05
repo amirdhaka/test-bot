@@ -11,7 +11,7 @@ server = Flask(__name__)
 
 @server.route('/')
 def home():
-    return "I am alive!"
+    return "Bot is alive!"
 
 def run_server():
     port = int(os.environ.get("PORT", 8080))
@@ -22,6 +22,23 @@ def keep_alive():
 
 # ---------- TOKEN ----------
 TOKEN = "8773704187:AAGTsdTedZNUuBYaKsrNUHE1DLt7sjakHJg"
+
+# ---------- CLEAN KEY ----------
+def clean_key(text):
+    return text.lower().replace("'", "").replace("’", "").strip()
+
+# ---------- FORMAT KEY (DISPLAY FIX) ----------
+def format_key(key):
+    mapping = {
+        "name": "Name",
+        "fathers name": "Father's Name",
+        "father name": "Father's Name",
+        "mothers name": "Mother's Name",
+        "mother name": "Mother's Name",
+        "result": "Result",
+        "institute": "Institute"
+    }
+    return mapping.get(key, key.title())
 
 # ---------- RESULT FUNCTION ----------
 def get_result(roll):
@@ -40,30 +57,45 @@ def get_result(roll):
         res = requests.post(url, data=data, headers=headers)
         soup = BeautifulSoup(res.text, "html.parser")
 
-        def get_val(label):
-            tag = soup.find(string=label)
-            return tag.find_next().text.strip() if tag else "N/A"
+        info = {}
 
-        name = get_val("Name")
-        father's = get_val("Father's Name")
-        mother's = get_val("Mother's Name")
-        result_status = get_val("Result")
-        institute = get_val("Institute")
-
-        subjects = ""
+        # ✅ Extract all table data
         for row in soup.find_all("tr"):
             cols = row.find_all("td")
             if len(cols) == 2:
-                subjects += f"{cols[0].text.strip()} → {cols[1].text.strip()}\n"
+                key = clean_key(cols[0].text)
+                val = cols[1].text.strip()
+                info[key] = val
 
-        return name, father's, mother's, result_status, institute, subjects
+        # ✅ Get main fields
+        name = info.get("name", "N/A")
+        father = info.get("fathers name") or info.get("father name", "N/A")
+        mother = info.get("mothers name") or info.get("mother name", "N/A")
+        result_status = info.get("result", "N/A")
+        institute = info.get("institute", "N/A")
 
-    except:
+        # ✅ Subjects
+        subjects = ""
+        skip_keys = [
+            "name", "fathers name", "father name",
+            "mothers name", "mother name",
+            "result", "institute",
+            "passing year", "center"
+        ]
+
+        for key, val in info.items():
+            if key not in skip_keys:
+                subjects += f"🔹 {format_key(key)} ➤ {val}\n"
+
+        return name, father, mother, result_status, institute, subjects
+
+    except Exception as e:
+        print("Error:", e)
         return None
 
 # ---------- START ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [["🔍 Check Result"]]
+    keyboard = [["🎓 Check HSC Result"]]
     await update.message.reply_text(
         "📢 Welcome!\nClick below 👇",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -73,11 +105,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
-    if text == "🔍 Check Result":
+    if text == "🎓 Check HSC Result":
         await update.message.reply_text("🔢 Send Roll Number:")
 
     elif text.isdigit():
-        await update.message.reply_text("⏳ Checking...")
+        await update.message.reply_text(f"⏳ Roll {text} এর রেজাল্ট খোঁজা হচ্ছে...")
 
         result = get_result(text)
 
@@ -85,31 +117,34 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Result not found / Server error")
             return
 
-        name, father's, mother's, res_status, institute, subjects = result
+        name, father, mother, res_status, institute, subjects = result
+
+        status_emoji = "❌ FAIL" if "fail" in res_status.lower() else "✅ PASSED"
 
         msg = f"""
-👨‍🎓 STUDENT INFO
-━━━━━━━━━━━━━━━
-👤 Name: {name}
-👨 Father's: {father}
-👩 Mother's: {mother}
+✨ HSC RESULT 2025 (JASHORE)
+━━━━━━━━━━━━━━━━━━
 
-📘 RESULT 2025
-━━━━━━━━━━━━━━━
+👨‍🎓 STUDENT INFO
+👤 Name: {name}
+👨 Father's Name: {father}
+👩 Mother's Name: {mother}
+
+📊 RESULT
 🆔 Roll: {text}
-📊 Result: {res_status}
+📌 Status: {status_emoji}
 
 🏫 {institute}
 
-📊 SUBJECTS
-━━━━━━━━━━━━━━━
+📚 SUBJECTS
+━━━━━━━━━━━━━━━━━━
 {subjects}
 """
 
         await update.message.reply_text(msg)
 
     else:
-        await update.message.reply_text("❗ Click 'Check Result' and send roll number")
+        await update.message.reply_text("❗ Click button and send roll number")
 
 # ---------- RUN ----------
 if __name__ == "__main__":
