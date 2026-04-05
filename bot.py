@@ -25,63 +25,65 @@ TOKEN = "8773704187:AAGTsdTedZNUuBYaKsrNUHE1DLt7sjakHJg"
 
 # ---------- RESULT FUNCTION ----------
 def get_result(roll):
-    url = "https://www.jessoreboard.gov.bd/resultjbh25/result.php"
-
-    data = {
-        "roll": roll,
-        "regno": ""
-    }
+    session = requests.Session()
 
     headers = {
-        "User-Agent": "Mozilla/5.0"
+        "User-Agent": "Mozilla/5.0",
+        "Referer": "https://www.jessoreboard.gov.bd/resultjbh25/index.php"
     }
 
+    session.headers.update(headers)
+
     try:
-        res = requests.post(url, data=data, headers=headers)
+        # Step 1: Load main page (cookie/session)
+        session.get("https://www.jessoreboard.gov.bd/resultjbh25/index.php")
+
+        # Step 2: Post request
+        res = session.post(
+            "https://www.jessoreboard.gov.bd/resultjbh25/result.php",
+            data={"roll": roll, "regno": ""}
+        )
+
+        html = res.text.lower()
+
+        if "no result" in html or "not found" in html:
+            return None
+
         soup = BeautifulSoup(res.text, "html.parser")
 
         rows = soup.find_all("tr")
 
-        name = father = mother = institute = result_status = "N/A"
+        info = {}
         subjects = ""
 
         for row in rows:
             cols = row.find_all("td")
 
+            # 🔹 Info table
             if len(cols) == 2:
-                key = cols[0].text.strip().lower()
+                key = cols[0].text.strip()
                 value = cols[1].text.strip()
+                info[key] = value
 
-                # ✅ Main info
-                if key == "name":
-                    name = value
-                elif "father" in key:
-                    father = value
-                elif "mother" in key:
-                    mother = value
-                elif key == "result":
-                    result_status = value
-                elif "institute" in key:
-                    institute = value
+            # 🔹 Subject table (Code | Subject | Grade)
+            elif len(cols) == 3:
+                code = cols[0].text.strip()
+                subject = cols[1].text.strip()
+                grade = cols[2].text.strip()
 
-                # ✅ Subjects
-                elif key not in [
-                    "name", "father's name", "mother's name",
-                    "result", "institute", "center", "passing year"
-                ]:
-                    if len(value) <= 3:
-                        subjects += f"➡️ {cols[0].text.strip()} → {value}\n"
+                subjects += f"➡️ {code} → {subject} → {grade}\n"
 
-        return name, father, mother, result_status, institute, subjects
+        return info, subjects
 
-    except:
+    except Exception as e:
+        print(e)
         return None
 
 # ---------- START ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["🎓 Check HSC 2025 (Jashore)"]]
     await update.message.reply_text(
-        "📢 Welcome!\nClick below 👇",
+        "📢 Welcome!\nClick button 👇",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     )
 
@@ -99,23 +101,29 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         result = get_result(roll)
 
         if not result:
-            await update.message.reply_text("❌ Result not found / Server issue")
+            await update.message.reply_text("❌ এই রোলের কোনো রেজাল্ট পাওয়া যায়নি")
             return
 
-        name, father, mother, res_status, institute, subjects = result
+        info, subjects = result
 
         msg = f"""
 🌟 HSC RESULT 2025 (JASHORE)
 ━━━━━━━━━━━━━━━━━━━━
 
-👤 Name: {name}
-👨 Father: {father}
-👩 Mother: {mother}
+👤 Name: {info.get('Name','N/A')}
+👨 Father: {info.get("Father's Name",'N/A')}
+👩 Mother: {info.get("Mother's Name",'N/A')}
 
-🆔 Roll: {roll}
-📊 Status: {res_status}
+🆔 Roll: {info.get('Roll No','N/A')}
+📄 Reg: {info.get('Reg. No','N/A')}
+📚 Group: {info.get('Group','N/A')}
+📅 Session: {info.get('Session','N/A')}
+📆 Year: {info.get('Passing Year','N/A')}
+📌 Type: {info.get('Type','N/A')}
 
-🏫 {institute}
+📊 Result: {info.get('Result','N/A')}
+🏫 Institute: {info.get('Institute','N/A')}
+📍 Center: {info.get('Center','N/A')}
 
 📚 Grade Sheet:
 ━━━━━━━━━━━━━━━━━━━━
