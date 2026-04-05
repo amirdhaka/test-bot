@@ -109,9 +109,16 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 👤 Name: {name}
 👨 Father: {father}
 👩 Mother: {mother}
+🎂 DOB: {dob}
 
-🆔 Roll: {roll}
-📊 Status: {res_status}
+📘 RESULT {data['year']}
+━━━━━━━━━━━━━━━
+🆔 Roll: {data['roll']}
+📄 Reg: {data['reg']}
+🏫 Board: {data['board'].upper()}
+
+📊 Result: {result_status}
+⭐ GPA: {gpa}
 
 🏫 {institute}
 
