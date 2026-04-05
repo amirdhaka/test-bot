@@ -1,254 +1,158 @@
 import requests
-from io import BytesIO
-from urllib.parse import urljoin
+import os
 from bs4 import BeautifulSoup
-from PIL import Image
-
 from flask import Flask
 from threading import Thread
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    ReplyKeyboardMarkup
-)
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    MessageHandler,
-    CallbackQueryHandler,
-    filters,
-    ContextTypes
-)
+# ---------- FLASK SETUP (For Render/Replit) ----------
+server = Flask(__name__)
 
+@server.route('/')
+def home():
+    return "Jashore Board Bot is Alive and Running!"
+
+def run_server():
+    port = int(os.environ.get("PORT", 8080))
+    server.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run_server)
+    t.daemon = True
+    t.start()
+# -----------------------------------------------------
+
+# আপনার দেওয়া টেস্ট এপিআই টোকেন
 TOKEN = "8773704187:AAGTsdTedZNUuBYaKsrNUHE1DLt7sjakHJg"
-BASE_URL = "https://esheba.sylhetboard.gov.bd/publicResult/"
 
 user_data = {}
 
-# ===== FLASK KEEP ALIVE =====
-app_flask = Flask('')
+# ---------- JASHORE BOARD RESULT FETCH ----------
+def get_jashore_result(roll, regno):
+    url = "https://www.jessoreboard.gov.bd/resultjbh25/result.php"
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "Referer": "https://www.jessoreboard.gov.bd/resultjbh25/index.php",
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
+    
+    payload = {
+        "roll": roll,
+        "regno": regno
+    }
 
-@app_flask.route('/')
-def home():
-    return "Bot is alive!"
+    try:
+        session = requests.Session()
+        response = session.post(url, data=payload, headers=headers)
+        
+        if response.status_code == 200:
+            return response.text
+        return None
+    except Exception as e:
+        print(f"Error fetching data: {e}")
+        return None
 
-def run():
-    app_flask.run(host='0.0.0.0', port=8080)
-
-def keep_alive():
-    t = Thread(target=run)
-    t.start()
-
-# ===== CAPTCHA RESIZE =====
-def resize_captcha(image_bytes):
-    img = Image.open(BytesIO(image_bytes))
-    img = img.resize((250, 80))
-    img = img.convert("L")
-
-    buffer = BytesIO()
-    img.save(buffer, format="PNG")
-    buffer.seek(0)
-    return buffer
-
-# ===== SAFE GET =====
-def get_value(data, *keys):
-    for key in keys:
-        if key in data and data[key]:
-            return data[key]
-    return ""
-
-# ===== EXTRACT =====
-def extract(soup, keyword):
-    data_dict = {}
-    for table in soup.find_all("table"):
-        if keyword in table.get_text():
-            for row in table.find_all("tr"):
-                cols = row.find_all("td")
-
-                if len(cols) >= 4:
-                    data_dict[cols[0].get_text(strip=True)] = cols[1].get_text(strip=True)
-                    data_dict[cols[2].get_text(strip=True)] = cols[3].get_text(strip=True)
-
-                elif len(cols) == 2:
-                    data_dict[cols[0].get_text(strip=True)] = cols[1].get_text(strip=True)
-
-    return data_dict
-
-# ===== START =====
+# ---------- START COMMAND ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [["🚀 Start"]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-
+    keyboard = [["🎓 Check HSC 2025 (Jashore)"]]
     await update.message.reply_text(
-        "📥 Start চাপ দিয়ে শুরু করো:",
-        reply_markup=reply_markup
+        "👋 আসসালামু আলাইকুম!\nযশোর বোর্ডের ২০২৫ সালের এইচএসসি রেজাল্ট চেক করার টেস্ট বটে স্বাগতম।",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     )
 
-# ===== HANDLE MESSAGE =====
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.chat_id
-    text = update.message.text.strip()
+# ---------- MESSAGE HANDLER ----------
+async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.message.chat_id
+    text = update.message.text
 
-    if text == "🚀 Start":
-        await update.message.reply_text("📥 তোমার Roll নম্বর দাও:")
-        return
+    if chat_id not in user_data:
+        user_data[chat_id] = {}
 
-    if user_id not in user_data:
-        session = requests.Session()
-        session.get(BASE_URL + "index.php")
-        captcha = session.get(BASE_URL + "captcha.php")
+    data = user_data[chat_id]
 
-        user_data[user_id] = {
-            "roll": text,
-            "session": session
-        }
+    if text == "🎓 Check HSC 2025 (Jashore)":
+        data.clear()
+        data['step'] = 'get_roll'
+        await update.message.reply_text("🔢 আপনার **Roll Number** টি লিখুন:")
 
-        small_img = resize_captcha(captcha.content)
-
-        await update.message.reply_photo(
-            photo=small_img,
-            caption="🔐 CAPTCHA লিখো:"
-        )
-
-    else:
-        captcha_text = text
-        data = user_data[user_id]
-
-        loading_msg = await update.message.reply_text(
-            "⏳ একটু অপেক্ষা করো...\nResult আনতেছি..."
-        )
-
-        payload = {
-            "hroll": data["roll"],
-            "autocaptcha": captcha_text,
-            "btnSubmit": "Submit",
-            "btnaction": "c2hvd1B1YmxpY1Jlc3VsdA==",
-            "param": "MjAyMg=="
-        }
-
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Referer": BASE_URL + "index.php"
-        }
-
-        res = data["session"].post(
-            BASE_URL + "include/function.php",
-            data=payload,
-            headers=headers
-        )
-
-        html = res.text
-        await loading_msg.delete()
-
-        if "STUDENT INFORMATION" in html:
-            soup = BeautifulSoup(html, "html.parser")
-
-            for img in soup.find_all("img"):
-                src = img.get("src")
-                if src and ("jpg" in src or "jpeg" in src):
-                    img_url = urljoin(BASE_URL, src)
-                    await update.message.reply_photo(photo=img_url)
-                    break
-
-            student = extract(soup, "STUDENT INFORMATION")
-            hsc = extract(soup, "HSC RESULT")
-
-            name = get_value(student, "Name")
-            father = get_value(student, "Father's Name")
-            mother = get_value(student, "Mother's Name")
-            dob = get_value(student, "Date of Birth")
-            gender = get_value(student, "Gender")
-
-            roll = get_value(hsc, "Roll No")
-            reg = get_value(hsc, "Registration No", "Registration No.")
-            board = get_value(hsc, "Board")
-            group = get_value(hsc, "Group")
-            result = get_value(hsc, "Result")
-            gpa = get_value(hsc, "GPA")
-            institute = get_value(hsc, "Institute")
-
-            msg = (
-                "🧑‍🎓 STUDENT INFORMATION\n"
-                "━━━━━━━━━━━━━━\n\n"
-                f"👤 Name: {name}\n"
-                f"👨 Father: {father}\n"
-                f"👩 Mother: {mother}\n\n"
-                f"📅 DOB: {dob}\n"
-                f"⚧ Gender: {gender}\n\n"
-                "━━━━━━━━━━━━━━\n"
-                "📘 HSC RESULT 2022\n"
-                "━━━━━━━━━━━━━━\n\n"
-                f"🆔 Roll No: {roll}\n"
-                f"📄 Registration No: {reg}\n\n"
-                f"🏫 Board: {board}\n"
-                f"📚 Group: {group}\n\n"
-                f"📊 Result: {result}\n"
-                f"⭐ GPA: {gpa}\n\n"
-                f"🏫 Institute: {institute}"
-            )
-
-            await update.message.reply_text(msg)
-
-            next_roll = int(roll) + 1
-
-            keyboard = [
-                [InlineKeyboardButton(f"➡️ Next ({next_roll})", callback_data=f"next_{next_roll}")]
-            ]
-
-            reply_markup = InlineKeyboardMarkup(keyboard)
-
-            await update.message.reply_text(
-                "👉 Next করতে নিচের বাটনে চাপ দাও",
-                reply_markup=reply_markup
-            )
-
+    elif data.get('step') == 'get_roll':
+        if text.isdigit():
+            data['roll'] = text
+            data['step'] = 'get_reg'
+            await update.message.reply_text("📝 এবার আপনার **Registration Number** টি লিখুন:")
         else:
-            await update.message.reply_text("❌ ভুল CAPTCHA বা Roll!")
+            await update.message.reply_text("❌ দয়া করে সঠিক রোল নম্বর (শুধু সংখ্যা) দিন।")
 
-        del user_data[user_id]
+    elif data.get('step') == 'get_reg':
+        data['reg'] = text
+        await update.message.reply_text("⏳ রেজাল্ট সার্ভার থেকে খোঁজা হচ্ছে... একটু অপেক্ষা করুন।")
 
-# ===== BUTTON =====
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
+        html = get_jashore_result(data['roll'], data['reg'])
 
-    user_id = query.message.chat_id
-    data = query.data
+        if not html or "Result not found" in html:
+            await update.message.reply_text("❌ রেজাল্ট পাওয়া যায়নি! রোল বা রেজিস্ট্রেশন নম্বর ভুল হতে পারে।")
+            data.clear()
+            return
 
-    if data.startswith("next_"):
-        next_roll = data.split("_")[1]
+        soup = BeautifulSoup(html, "html.parser")
+        
+        try:
+            # ছাত্র-ছাত্রীর বেসিক তথ্য সংগ্রহ
+            all_tds = soup.find_all('td')
+            info = {}
+            for i in range(len(all_tds)):
+                txt = all_tds[i].get_text().strip()
+                if "Name" in txt and ":" not in txt:
+                    info['Name'] = all_tds[i+1].get_text().strip()
+                elif "Father's Name" in txt:
+                    info['Father'] = all_tds[i+1].get_text().strip()
+                elif "Result" in txt and i+1 < len(all_tds):
+                    info['Status'] = all_tds[i+1].get_text().strip()
 
-        await query.edit_message_text("🔄 Loading...")
+            # গ্রেড শীট তৈরি
+            subject_list = ""
+            rows = soup.find_all('tr')
+            for row in rows:
+                cols = row.find_all('td')
+                if len(cols) >= 2:
+                    sub_name = cols[0].get_text().strip()
+                    grade = cols[-1].get_text().strip()
+                    if grade in ['A+', 'A', 'A-', 'B', 'C', 'D', 'F']:
+                        subject_list += f"🔹 {sub_name} ➔ **{grade}**\n"
 
-        session = requests.Session()
-        session.get(BASE_URL + "index.php")
-        captcha = session.get(BASE_URL + "captcha.php")
+            result_summary = f"""
+🌟 **HSC RESULT 2025 (JASHORE)** 🌟
+━━━━━━━━━━━━━━━━━━━━
+👤 **Name:** {info.get('Name', 'N/A')}
+👨 **Father:** {info.get('Father', 'N/A')}
+🆔 **Roll:** {data['roll']} | **Reg:** {data['reg']}
+📊 **Overall Status:** {info.get('Status', 'N/A')}
+━━━━━━━━━━━━━━━━━━━━
+📚 **Subject Wise Grade:**
+{subject_list if subject_list else "_গ্রেড শীট লোড করা সম্ভব হয়নি_"}
+━━━━━━━━━━━━━━━━━━━━
+_Test Bot for Jashore Board_
+"""
+            await update.message.reply_text(result_summary, parse_mode='Markdown')
+        except Exception as e:
+            print(f"Scraping error: {e}")
+            await update.message.reply_text("⚠️ রেজাল্ট প্রসেস করতে কিছুটা সমস্যা হয়েছে। পুনরায় চেষ্টা করুন।")
+        
+        data.clear()
 
-        user_data[user_id] = {
-            "roll": next_roll,
-            "session": session
-        }
-
-        small_img = resize_captcha(captcha.content)
-
-        await query.message.reply_text(next_roll)
-
-        await query.message.reply_photo(
-            photo=small_img,
-            caption="🔐 CAPTCHA লিখো:"
-        )
-
-# ===== RUN =====
+# ---------- BOT EXECUTION ----------
 if __name__ == "__main__":
-    keep_alive()  # 🔥 IMPORTANT
+    # সার্ভার সচল রাখার জন্য Flask Thread চালু করা
+    keep_alive()
+    
+    # টেলিগ্রাম অ্যাপ্লিকেশন বিল্ড করা
+    bot_app = ApplicationBuilder().token(TOKEN).build()
+    
+    # হ্যান্ডলার যুক্ত করা
+    bot_app.add_handler(CommandHandler("start", start))
+    bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-    app = ApplicationBuilder().token(TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(CallbackQueryHandler(button_handler))
-
-    print("🤖 Bot Running...")
-    app.run_polling()
+    print(f"🚀 BOT STARTED WITH TOKEN: {TOKEN[:10]}... ✅")
+    bot_app.run_polling()
