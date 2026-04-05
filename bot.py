@@ -43,7 +43,6 @@ def get_result(roll):
         rows = soup.find_all("tr")
 
         name = father = mother = institute = result_status = "N/A"
-
         subjects = ""
 
         for row in rows:
@@ -53,21 +52,24 @@ def get_result(roll):
                 key = cols[0].text.strip().lower()
                 value = cols[1].text.strip()
 
-                # Main info
+                # ✅ Main info
                 if key == "name":
                     name = value
                 elif "father" in key:
                     father = value
                 elif "mother" in key:
                     mother = value
+                elif key == "result":
+                    result_status = value
                 elif "institute" in key:
                     institute = value
-                elif "result" in key:
-                    result_status = value
 
-                # Subjects filter
-                elif key not in ["center", "passing year"]:
-                    if len(value) <= 3:  # grade usually short
+                # ✅ Subjects
+                elif key not in [
+                    "name", "father's name", "mother's name",
+                    "result", "institute", "center", "passing year"
+                ]:
+                    if len(value) <= 3:
                         subjects += f"➡️ {cols[0].text.strip()} → {value}\n"
 
         return name, father, mother, result_status, institute, subjects
@@ -79,7 +81,7 @@ def get_result(roll):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["🎓 Check HSC 2025 (Jashore)"]]
     await update.message.reply_text(
-        "📢 Welcome!\nSelect option 👇",
+        "📢 Welcome!\nClick below 👇",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     )
 
@@ -97,7 +99,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         result = get_result(roll)
 
         if not result:
-            await update.message.reply_text("❌ Result not found / Server error")
+            await update.message.reply_text("❌ Result not found / Server issue")
             return
 
         name, father, mother, res_status, institute, subjects = result
@@ -109,16 +111,9 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
 👤 Name: {name}
 👨 Father: {father}
 👩 Mother: {mother}
-🎂 DOB: {dob}
 
-📘 RESULT {data['year']}
-━━━━━━━━━━━━━━━
-🆔 Roll: {data['roll']}
-📄 Reg: {data['reg']}
-🏫 Board: {data['board'].upper()}
-
-📊 Result: {result_status}
-⭐ GPA: {gpa}
+🆔 Roll: {roll}
+📊 Status: {res_status}
 
 🏫 {institute}
 
