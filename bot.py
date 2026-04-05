@@ -6,30 +6,28 @@ from threading import Thread
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-# ---------- KEEP ALIVE (Render/Replit) ----------
-app_flask = Flask(__name__)
+# ---------- KEEP ALIVE ----------
+server = Flask(__name__)
 
-@app_flask.route('/')
+@server.route('/')
 def home():
-    return "Bot is running!"
+    return "I am alive!"
 
-def run():
+def run_server():
     port = int(os.environ.get("PORT", 8080))
-    app_flask.run(host='0.0.0.0', port=port)
+    server.run(host='0.0.0.0', port=port)
 
 def keep_alive():
-    t = Thread(target=run)
-    t.daemon = True
-    t.start()
+    Thread(target=run_server).start()
 
-# ---------- TELEGRAM TOKEN ----------
+# ---------- TOKEN ----------
 TOKEN = "8773704187:AAGTsdTedZNUuBYaKsrNUHE1DLt7sjakHJg"
 
-# ---------- RESULT FETCH FUNCTION ----------
-def fetch_result(roll):
+# ---------- RESULT FUNCTION ----------
+def get_result(roll):
     url = "https://www.jessoreboard.gov.bd/resultjbh25/result.php"
 
-    payload = {
+    data = {
         "roll": roll,
         "regno": ""
     }
@@ -39,87 +37,101 @@ def fetch_result(roll):
     }
 
     try:
-        response = requests.post(url, data=payload, headers=headers, timeout=10)
-        soup = BeautifulSoup(response.text, "html.parser")
+        res = requests.post(url, data=data, headers=headers)
+        soup = BeautifulSoup(res.text, "html.parser")
 
-        def get_value(label):
-            tag = soup.find(string=label)
-            return tag.find_next().text.strip() if tag else "N/A"
+        rows = soup.find_all("tr")
 
-        name = get_value("Name")
-        father = get_value("Father's Name")
-        mother = get_value("Mother's Name")
-        result = get_value("Result")
-        institute = get_value("Institute")
+        name = father = mother = institute = result_status = "N/A"
 
         subjects = ""
-        for row in soup.find_all("tr"):
-            cols = row.find_all("td")
-            if len(cols) == 2:
-                subjects += f"{cols[0].text.strip()} → {cols[1].text.strip()}\n"
 
-        return name, father, mother, result, institute, subjects
+        for row in rows:
+            cols = row.find_all("td")
+
+            if len(cols) == 2:
+                key = cols[0].text.strip().lower()
+                value = cols[1].text.strip()
+
+                # Main info
+                if key == "name":
+                    name = value
+                elif "father" in key:
+                    father = value
+                elif "mother" in key:
+                    mother = value
+                elif "institute" in key:
+                    institute = value
+                elif "result" in key:
+                    result_status = value
+
+                # Subjects filter
+                elif key not in ["center", "passing year"]:
+                    if len(value) <= 3:  # grade usually short
+                        subjects += f"➡️ {cols[0].text.strip()} → {value}\n"
+
+        return name, father, mother, result_status, institute, subjects
 
     except:
         return None
 
-# ---------- START COMMAND ----------
+# ---------- START ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [["🔍 Check Result"]]
+    keyboard = [["🎓 Check HSC 2025 (Jashore)"]]
     await update.message.reply_text(
-        "📢 Welcome!\nClick below 👇",
+        "📢 Welcome!\nSelect option 👇",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     )
 
-# ---------- MESSAGE HANDLER ----------
+# ---------- HANDLE ----------
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
+    text = update.message.text
 
-    if text == "🔍 Check Result":
-        await update.message.reply_text("🔢 Enter Roll Number:")
+    if text == "🎓 Check HSC 2025 (Jashore)":
+        await update.message.reply_text("🔢 আপনার Roll Number দিন:")
 
     elif text.isdigit():
-        await update.message.reply_text("⏳ Checking result...")
+        roll = text
+        await update.message.reply_text(f"⏳ রোল {roll} এর রেজাল্ট খোঁজা হচ্ছে...")
 
-        data = fetch_result(text)
+        result = get_result(roll)
 
-        if not data:
-            await update.message.reply_text("❌ Result not found / Server problem!")
+        if not result:
+            await update.message.reply_text("❌ Result not found / Server error")
             return
 
-        name, father, mother, result, institute, subjects = data
+        name, father, mother, res_status, institute, subjects = result
 
         msg = f"""
-👨‍🎓 STUDENT INFO
-━━━━━━━━━━━━━━━
+🌟 HSC RESULT 2025 (JASHORE)
+━━━━━━━━━━━━━━━━━━━━
+
 👤 Name: {name}
 👨 Father: {father}
 👩 Mother: {mother}
 
-📘 RESULT 2025
-━━━━━━━━━━━━━━━
-🆔 Roll: {text}
-📊 Result: {result}
+🆔 Roll: {roll}
+📊 Status: {res_status}
 
 🏫 {institute}
 
-📊 SUBJECTS
-━━━━━━━━━━━━━━━
+📚 Grade Sheet:
+━━━━━━━━━━━━━━━━━━━━
 {subjects}
 """
 
         await update.message.reply_text(msg)
 
     else:
-        await update.message.reply_text("❗ Please click 'Check Result' and send roll number")
+        await update.message.reply_text("❗ বাটনে ক্লিক করে তারপর রোল নাম্বার দিন")
 
-# ---------- MAIN ----------
+# ---------- RUN ----------
 if __name__ == "__main__":
     keep_alive()
 
-    bot = ApplicationBuilder().token(TOKEN).build()
-    bot.add_handler(CommandHandler("start", start))
-    bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-    print("🚀 BOT STARTED SUCCESSFULLY")
-    bot.run_polling()
+    print("🚀 BOT RUNNING SUCCESSFULLY")
+    app.run_polling()
