@@ -25,66 +25,47 @@ TOKEN = "8773704187:AAGTsdTedZNUuBYaKsrNUHE1DLt7sjakHJg"
 
 # ---------- RESULT FUNCTION ----------
 def get_result(roll):
-    session = requests.Session()
+    url = "https://www.jessoreboard.gov.bd/resultjbh25/result.php"
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "Referer": "https://www.jessoreboard.gov.bd/resultjbh25/index.php",
-        "Origin": "https://www.jessoreboard.gov.bd",
-        "Content-Type": "application/x-www-form-urlencoded"
+    data = {
+        "roll": roll,
+        "regno": ""
     }
 
-    session.headers.update(headers)
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
 
     try:
-        # Step 1: Load homepage (important)
-        session.get("https://www.jessoreboard.gov.bd/resultjbh25/index.php")
-
-        # Step 2: Send request
-        res = session.post(
-            "https://www.jessoreboard.gov.bd/resultjbh25/result.php",
-            data={"roll": roll, "regno": ""}
-        )
-
-        # ❌ যদি valid result না আসে
-        if "Roll No" not in res.text:
-            return None
-
+        res = requests.post(url, data=data, headers=headers)
         soup = BeautifulSoup(res.text, "html.parser")
 
-        rows = soup.find_all("tr")
+        def get_val(label):
+            tag = soup.find(string=label)
+            return tag.find_next().text.strip() if tag else "N/A"
 
-        info = {}
+        name = get_val("Name")
+        father's = get_val("Father's Name")
+        mother's = get_val("Mother's Name")
+        result_status = get_val("Result")
+        institute = get_val("Institute")
+
         subjects = ""
-
-        for row in rows:
+        for row in soup.find_all("tr"):
             cols = row.find_all("td")
-
-            # Info table
             if len(cols) == 2:
-                key = cols[0].text.strip()
-                value = cols[1].text.strip()
-                info[key] = value
+                subjects += f"{cols[0].text.strip()} → {cols[1].text.strip()}\n"
 
-            # Subject table
-            elif len(cols) == 3:
-                code = cols[0].text.strip()
-                subject = cols[1].text.strip()
-                grade = cols[2].text.strip()
+        return name, father's, mother's, result_status, institute, subjects
 
-                subjects += f"➡️ {code} → {subject} → {grade}\n"
-
-        return info, subjects
-
-    except Exception as e:
-        print("Error:", e)
+    except:
         return None
 
 # ---------- START ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [["🎓 Check HSC 2025 (Jashore)"]]
+    keyboard = [["🔍 Check Result"]]
     await update.message.reply_text(
-        "📢 Welcome!\nClick button 👇",
+        "📢 Welcome!\nClick below 👇",
         reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     )
 
@@ -92,49 +73,43 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
-    if text == "🎓 Check HSC 2025 (Jashore)":
-        await update.message.reply_text("🔢 আপনার Roll Number দিন:")
+    if text == "🔍 Check Result":
+        await update.message.reply_text("🔢 Send Roll Number:")
 
     elif text.isdigit():
-        roll = text
-        await update.message.reply_text(f"⏳ রোল {roll} এর রেজাল্ট খোঁজা হচ্ছে...")
+        await update.message.reply_text("⏳ Checking...")
 
-        result = get_result(roll)
+        result = get_result(text)
 
         if not result:
-            await update.message.reply_text("❌ এই রোলের কোনো রেজাল্ট পাওয়া যায়নি")
+            await update.message.reply_text("❌ Result not found / Server error")
             return
 
-        info, subjects = result
+        name, father's, mother's, res_status, institute, subjects = result
 
         msg = f"""
-🌟 HSC RESULT 2025 (JASHORE)
-━━━━━━━━━━━━━━━━━━━━
+👨‍🎓 STUDENT INFO
+━━━━━━━━━━━━━━━
+👤 Name: {name}
+👨 Father's: {father}
+👩 Mother's: {mother}
 
-👤 Name: {info.get('Name','N/A')}
-👨 Father: {info.get("Father's Name",'N/A')}
-👩 Mother: {info.get("Mother's Name",'N/A')}
+📘 RESULT 2025
+━━━━━━━━━━━━━━━
+🆔 Roll: {text}
+📊 Result: {res_status}
 
-🆔 Roll: {info.get('Roll No','N/A')}
-📄 Reg: {info.get('Reg. No','N/A')}
-📚 Group: {info.get('Group','N/A')}
-📅 Session: {info.get('Session','N/A')}
-📆 Year: {info.get('Passing Year','N/A')}
-📌 Type: {info.get('Type','N/A')}
+🏫 {institute}
 
-📊 Result: {info.get('Result','N/A')}
-🏫 Institute: {info.get('Institute','N/A')}
-📍 Center: {info.get('Center','N/A')}
-
-📚 Grade Sheet:
-━━━━━━━━━━━━━━━━━━━━
+📊 SUBJECTS
+━━━━━━━━━━━━━━━
 {subjects}
 """
 
         await update.message.reply_text(msg)
 
     else:
-        await update.message.reply_text("❗ বাটনে ক্লিক করে তারপর রোল নাম্বার দিন")
+        await update.message.reply_text("❗ Click 'Check Result' and send roll number")
 
 # ---------- RUN ----------
 if __name__ == "__main__":
@@ -144,5 +119,5 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
 
-    print("🚀 BOT RUNNING SUCCESSFULLY")
+    print("🚀 BOT RUNNING...")
     app.run_polling()
