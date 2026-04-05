@@ -28,25 +28,26 @@ def get_result(roll):
     session = requests.Session()
 
     headers = {
-        "User-Agent": "Mozilla/5.0",
-        "Referer": "https://www.jessoreboard.gov.bd/resultjbh25/index.php"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Referer": "https://www.jessoreboard.gov.bd/resultjbh25/index.php",
+        "Origin": "https://www.jessoreboard.gov.bd",
+        "Content-Type": "application/x-www-form-urlencoded"
     }
 
     session.headers.update(headers)
 
     try:
-        # Step 1: Load main page (cookie/session)
+        # Step 1: Load homepage (important)
         session.get("https://www.jessoreboard.gov.bd/resultjbh25/index.php")
 
-        # Step 2: Post request
+        # Step 2: Send request
         res = session.post(
             "https://www.jessoreboard.gov.bd/resultjbh25/result.php",
             data={"roll": roll, "regno": ""}
         )
 
-        html = res.text.lower()
-
-        if "no result" in html or "not found" in html:
+        # ❌ যদি valid result না আসে
+        if "Roll No" not in res.text:
             return None
 
         soup = BeautifulSoup(res.text, "html.parser")
@@ -59,13 +60,13 @@ def get_result(roll):
         for row in rows:
             cols = row.find_all("td")
 
-            # 🔹 Info table
+            # Info table
             if len(cols) == 2:
                 key = cols[0].text.strip()
                 value = cols[1].text.strip()
                 info[key] = value
 
-            # 🔹 Subject table (Code | Subject | Grade)
+            # Subject table
             elif len(cols) == 3:
                 code = cols[0].text.strip()
                 subject = cols[1].text.strip()
@@ -76,7 +77,7 @@ def get_result(roll):
         return info, subjects
 
     except Exception as e:
-        print(e)
+        print("Error:", e)
         return None
 
 # ---------- START ----------
