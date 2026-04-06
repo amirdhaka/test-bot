@@ -25,19 +25,31 @@ TOKEN = "8773704187:AAGTsdTedZNUuBYaKsrNUHE1DLt7sjakHJg"
 
 # ---------- RESULT FUNCTION ----------
 def get_result(roll):
-    url = "https://www.mymensingheducationboard.gov.bd/resultmbh25/"
+    session = requests.Session()
+
+    main_url = "https://www.mymensingheducationboard.gov.bd/resultmbh25/"
+    post_url = "https://www.mymensingheducationboard.gov.bd/resultmbh25/result.php"
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Referer": main_url,
+        "Origin": "https://www.mymensingheducationboard.gov.bd",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "X-Requested-With": "XMLHttpRequest"
+    }
 
     data = {
         "roll": roll,
         "regno": ""
     }
 
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
-
     try:
-        res = requests.post(url, data=data, headers=headers)
+        # Step 1: Cookie নেওয়া
+        session.get(main_url, headers=headers)
+
+        # Step 2: Result request
+        res = session.post(post_url, data=data, headers=headers, timeout=10)
+
         soup = BeautifulSoup(res.text, "html.parser")
 
         def get_val(label):
@@ -56,9 +68,13 @@ def get_result(roll):
             if len(cols) == 2:
                 subjects += f"{cols[0].text.strip()} → {cols[1].text.strip()}\n"
 
+        if name == "N/A":
+            return None
+
         return name, father, mother, result_status, institute, subjects
 
-    except:
+    except Exception as e:
+        print("Error:", e)
         return None
 
 # ---------- START ----------
@@ -82,7 +98,7 @@ async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
         result = get_result(text)
 
         if not result:
-            await update.message.reply_text("❌ Result not found / Server error")
+            await update.message.reply_text("❌ Result not found / Server busy")
             return
 
         name, father, mother, res_status, institute, subjects = result
