@@ -25,7 +25,7 @@ TOKEN = "8773704187:AAGTsdTedZNUuBYaKsrNUHE1DLt7sjakHJg"
 
 # ---------- RESULT FUNCTION ----------
 def get_result(roll):
-    url = "https://www.jessoreboard.gov.bd/resultjbh25/result.php"
+    url = "https://www.mymensingheducationboard.gov.bd/resultmbh25/"
 
     data = {
         "roll": roll,
