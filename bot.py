@@ -1,139 +1,201 @@
+import asyncio
 import requests
-import os
 from bs4 import BeautifulSoup
-from flask import Flask
-from threading import Thread
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
-# ---------- KEEP ALIVE ----------
-server = Flask(__name__)
-
-@server.route('/')
-def home():
-    return "I am alive!"
-
-def run_server():
-    port = int(os.environ.get("PORT", 8080))
-    server.run(host='0.0.0.0', port=port)
-
-def keep_alive():
-    Thread(target=run_server).start()
-
-# ---------- TOKEN ----------
 TOKEN = "8773704187:AAGTsdTedZNUuBYaKsrNUHE1DLt7sjakHJg"
 
-# ---------- RESULT FUNCTION ----------
-def get_result(roll):
-    session = requests.Session()
+user_stop_event = {}
+user_search_active = {}
+last_range = {}
 
-    main_url = "https://www.mymensingheducationboard.gov.bd/resultmbh25/"
-    post_url = "https://www.mymensingheducationboard.gov.bd/resultmbh25/result.php"
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "Referer": main_url,
-        "Origin": "https://www.mymensingheducationboard.gov.bd",
-        "Content-Type": "application/x-www-form-urlencoded",
-        "X-Requested-With": "XMLHttpRequest"
-    }
-
-    data = {
-        "roll": roll,
-        "regno": ""
-    }
+# ----------------- DATA FETCH -----------------
+def get_data(tran_id):
+    url = f"https://billpay.sonalibank.com.bd/DhakaCentralUniversity/Home/Voucher/{tran_id}"
+    headers = {"User-Agent": "Mozilla/5.0"}
 
     try:
-        # Step 1: Cookie নেওয়া
-        session.get(main_url, headers=headers)
+        res = requests.get(url, headers=headers, timeout=10)
 
-        # Step 2: Result request
-        res = session.post(post_url, data=data, headers=headers, timeout=10)
+        if res.status_code != 200:
+            return None, None
 
         soup = BeautifulSoup(res.text, "html.parser")
+        lines = [l.strip() for l in soup.get_text("\n").split("\n") if l.strip()]
 
-        def get_val(label):
-            tag = soup.find(string=label)
-            return tag.find_next().text.strip() if tag else "N/A"
+        def find(label):
+            for i in range(len(lines)):
+                if label in lines[i]:
+                    return lines[i+1]
+            return "N/A"
 
-        name = get_val("Name")
-        father = get_val("Father's Name")
-        mother = get_val("Mother's Name")
-        result_status = get_val("Result")
-        institute = get_val("Institute")
+        name = find("Name")
+        roll = find("Roll")
+        mobile = find("Mobile")
+        date = find("Date")
+        amount = find("Amount")
 
-        subjects = ""
-        for row in soup.find_all("tr"):
-            cols = row.find_all("td")
-            if len(cols) == 2:
-                subjects += f"{cols[0].text.strip()} → {cols[1].text.strip()}\n"
+        text = f"<pre>\nName   : {name}\nRoll   : {roll}\nMobile : {mobile}\nDate   : {date}\nAmount : {amount}\nID     : {tran_id}\n</pre>"
 
-        if name == "N/A":
-            return None
-
-        return name, father, mother, result_status, institute, subjects
+        return text, mobile
 
     except Exception as e:
         print("Error:", e)
+        return None, None
+
+# ----------------- BUTTON -----------------
+def stop_button():
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Stop", callback_data="stop")]])
+
+def next_button(num):
+    return InlineKeyboardMarkup([[InlineKeyboardButton(f"➡️ Next {num}", callback_data="next")]])
+
+def get_buttons(mobile):
+    if not mobile or mobile == "N/A":
         return None
 
-# ---------- START ----------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [["🔍 Check Result"]]
-    await update.message.reply_text(
-        "📢 Welcome!\nClick below 👇",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    )
+    n = mobile.replace("+","").replace(" ","")
+    if n.startswith("01"):
+        n = "880" + n[1:]
 
-# ---------- HANDLE ----------
-async def handle(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📱 WhatsApp", url=f"https://wa.me/{n}"),
+            InlineKeyboardButton("✈️ Telegram", url=f"https://t.me/+{n}")
+        ]
+    ])
 
-    if text == "🔍 Check Result":
-        await update.message.reply_text("🔢 Send Roll Number:")
+# ----------------- SEARCH ENGINE -----------------
+async def run_search(message, start, end):
+    user_id = message.chat_id
+
+    if user_search_active.get(user_id, False):
+        await message.reply_text("⚠️ Already running!")
+        return
+
+    user_search_active[user_id] = True
+    user_stop_event[user_id] = False
+
+    total = end - start + 1
+    count = 0
+
+    status = await message.reply_text("⏳ Starting...", reply_markup=stop_button())
+
+    try:
+        for i, num in enumerate(range(start, end+1), 1):
+
+            if user_stop_event.get(user_id):
+                break
+
+            tran_id = f"DC{num:07d}"
+
+            data, mobile = get_data(tran_id)
+
+            if data:
+                count += 1
+                try:
+                    await status.delete()
+                except:
+                    pass
+
+                await message.reply_text(
+                    f"📄 Result {count}:\n{data}",
+                    parse_mode="HTML",
+                    reply_markup=get_buttons(mobile)
+                )
+
+                status = await message.reply_text(
+                    f"⏳ Running...\n🔢 {tran_id}\n📊 Found: {count}\n✅ {i}/{total}",
+                    reply_markup=stop_button()
+                )
+
+            if i % 5 == 0:
+                try:
+                    await status.edit_text(
+                        f"⏳ Running...\n🔢 {tran_id}\n📊 Found: {count}\n✅ {i}/{total}",
+                        reply_markup=stop_button()
+                    )
+                except:
+                    pass
+
+            # ⏱️ 2 SECOND SAFE DELAY
+            for _ in range(20):
+                if user_stop_event.get(user_id):
+                    break
+                await asyncio.sleep(0.1)
+
+    finally:
+        user_search_active[user_id] = False
+        try:
+            await status.delete()
+        except:
+            pass
+
+        if user_stop_event.get(user_id):
+            await message.reply_text(f"🛑 Stopped!\n📊 Found: {count}")
+        else:
+            await message.reply_text(f"✅ Done!\n📊 Total: {count}")
+            await message.reply_text(f"👉 Next {total}?", reply_markup=next_button(total))
+
+# ----------------- HANDLER -----------------
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    user_id = update.message.from_user.id
+
+    if "-" in text:
+        try:
+            s, e = map(int, text.split("-"))
+            if (e - s + 1) > 500:
+                await update.message.reply_text("❌ Max 500 limit")
+                return
+
+            last_range[user_id] = (s, e)
+            await run_search(update.message, s, e)
+
+        except:
+            await update.message.reply_text("❌ Format: 1000-1500")
 
     elif text.isdigit():
-        await update.message.reply_text("⏳ Checking...")
+        num = int(text)
+        tran_id = f"DC{num:07d}"
 
-        result = get_result(text)
+        data, mobile = get_data(tran_id)
 
-        if not result:
-            await update.message.reply_text("❌ Result not found / Server busy")
-            return
+        if data:
+            await update.message.reply_text(
+                data,
+                parse_mode="HTML",
+                reply_markup=get_buttons(mobile)
+            )
+        else:
+            await update.message.reply_text("❌ Not Found")
 
-        name, father, mother, res_status, institute, subjects = result
+# ----------------- CALLBACK -----------------
+async def handle_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
 
-        msg = f"""
-👨‍🎓 STUDENT INFO
-━━━━━━━━━━━━━━━
-👤 Name: {name}
-👨 Father: {father}
-👩 Mother: {mother}
+    if query.data == "stop":
+        user_stop_event[user_id] = True
+        await query.answer("🛑 Stopping...")
+        await query.edit_message_reply_markup(reply_markup=None)
 
-📘 RESULT 2025
-━━━━━━━━━━━━━━━
-🆔 Roll: {text}
-📊 Result: {res_status}
+    elif query.data == "next":
+        await query.answer()
+        s, e = last_range.get(user_id, (0, 0))
+        diff = e - s + 1
+        new_s, new_e = e + 1, e + diff
+        last_range[user_id] = (new_s, new_e)
 
-🏫 {institute}
+        await query.message.reply_text(f"🔄 Next: {new_s}-{new_e}")
+        await run_search(query.message, new_s, new_e)
 
-📊 SUBJECTS
-━━━━━━━━━━━━━━━
-{subjects}
-"""
+# ----------------- RUN -----------------
+app = ApplicationBuilder().token(TOKEN).build()
 
-        await update.message.reply_text(msg)
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+app.add_handler(CallbackQueryHandler(handle_query))
 
-    else:
-        await update.message.reply_text("❗ Click 'Check Result' and send roll number")
-
-# ---------- RUN ----------
-if __name__ == "__main__":
-    keep_alive()
-
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle))
-
-    print("🚀 BOT RUNNING...")
-    app.run_polling()
+print("🤖 DCU BOT RUNNING...")
+app.run_polling()
