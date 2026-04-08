@@ -1,201 +1,94 @@
-import asyncio
 import requests
 from bs4 import BeautifulSoup
+import urllib3
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-TOKEN = "8773704187:AAGTsdTedZNUuBYaKsrNUHE1DLt7sjakHJg"
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-user_stop_event = {}
-user_search_active = {}
-last_range = {}
+# ----------- CONFIGURATION -----------
+BOT_TOKEN = "8723976334:AAE0vOE-tZ7pZvJXBTLNUYI1ozoxvOL0tp0"
 
-# ----------------- DATA FETCH -----------------
-def get_data(tran_id):
-    url = f"https://billpay.sonalibank.com.bd/DhakaCentralUniversity/Home/Voucher/{tran_id}"
-    headers = {"User-Agent": "Mozilla/5.0"}
+# আপনার নতুন স্ক্রিনশট অনুযায়ী এই কোডটি আপডেট করা হয়েছে
+CPO_PARAM = "aHR0cHM6Ly9iYmdnYy5lc2hpa3NhZW1zLmNvbQ" 
 
+headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
+    "Referer": f"https://108.181.90.163/index.php?__cpo={CPO_PARAM}"
+}
+
+def get_student_and_photo(roll):
+    session = requests.Session()
+    session.verify = False
+    
+    # প্রথমে লগইন সেশন তৈরি করা
+    login_url = f"https://108.181.90.163/login.php?__cpo={CPO_PARAM}"
+    login_payload = {
+        "username": "bbggcstudent",
+        "password": "bbggcstudent",
+        "login": "Sign In"
+    }
+    
     try:
-        res = requests.get(url, headers=headers, timeout=10)
-
-        if res.status_code != 200:
-            return None, None
-
-        soup = BeautifulSoup(res.text, "html.parser")
-        lines = [l.strip() for l in soup.get_text("\n").split("\n") if l.strip()]
-
-        def find(label):
-            for i in range(len(lines)):
-                if label in lines[i]:
-                    return lines[i+1]
-            return "N/A"
-
-        name = find("Name")
-        roll = find("Roll")
-        mobile = find("Mobile")
-        date = find("Date")
-        amount = find("Amount")
-
-        text = f"<pre>\nName   : {name}\nRoll   : {roll}\nMobile : {mobile}\nDate   : {date}\nAmount : {amount}\nID     : {tran_id}\n</pre>"
-
-        return text, mobile
-
-    except Exception as e:
-        print("Error:", e)
-        return None, None
-
-# ----------------- BUTTON -----------------
-def stop_button():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("🛑 Stop", callback_data="stop")]])
-
-def next_button(num):
-    return InlineKeyboardMarkup([[InlineKeyboardButton(f"➡️ Next {num}", callback_data="next")]])
-
-def get_buttons(mobile):
-    if not mobile or mobile == "N/A":
+        # লগইন করা
+        session.post(login_url, data=login_payload, headers=headers, timeout=15)
+        
+        # ডাটা সার্চ করা
+        search_url = f"https://108.181.90.163/Basic-Result-Enquiry-Center?roll={roll}&__cpo={CPO_PARAM}"
+        response = session.get(search_url, headers=headers, timeout=15)
+        
+        soup = BeautifulSoup(response.text, "html.parser")
+        table = soup.find("table")
+        
+        if table:
+            rows = table.find_all("tr")
+            if len(rows) >= 2:
+                cols = rows[1].find_all("td")
+                
+                # ফটোর লিঙ্ক (সার্ভারের লুকানো ফোল্ডার চেক)
+                photo = f"https://108.181.90.163/assets/students_picture/{roll}.jpg?__cpo={CPO_PARAM}"
+                
+                return {
+                    "Name": cols[0].get_text(strip=True),
+                    "Roll": roll,
+                    "Type": cols[3].get_text(strip=True),
+                    "Amount": cols[4].get_text(strip=True),
+                    "Photo": photo
+                }
+        return None
+    except:
         return None
 
-    n = mobile.replace("+","").replace(" ","")
-    if n.startswith("01"):
-        n = "880" + n[1:]
+# ----------- BOT HANDLER -----------
+async def handle_roll(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    roll = update.message.text.strip()
+    if not roll.isdigit(): return
 
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("📱 WhatsApp", url=f"https://wa.me/{n}"),
-            InlineKeyboardButton("✈️ Telegram", url=f"https://t.me/+{n}")
-        ]
-    ])
-
-# ----------------- SEARCH ENGINE -----------------
-async def run_search(message, start, end):
-    user_id = message.chat_id
-
-    if user_search_active.get(user_id, False):
-        await message.reply_text("⚠️ Already running!")
-        return
-
-    user_search_active[user_id] = True
-    user_stop_event[user_id] = False
-
-    total = end - start + 1
-    count = 0
-
-    status = await message.reply_text("⏳ Starting...", reply_markup=stop_button())
-
-    try:
-        for i, num in enumerate(range(start, end+1), 1):
-
-            if user_stop_event.get(user_id):
-                break
-
-            tran_id = f"DC{num:07d}"
-
-            data, mobile = get_data(tran_id)
-
-            if data:
-                count += 1
-                try:
-                    await status.delete()
-                except:
-                    pass
-
-                await message.reply_text(
-                    f"📄 Result {count}:\n{data}",
-                    parse_mode="HTML",
-                    reply_markup=get_buttons(mobile)
-                )
-
-                status = await message.reply_text(
-                    f"⏳ Running...\n🔢 {tran_id}\n📊 Found: {count}\n✅ {i}/{total}",
-                    reply_markup=stop_button()
-                )
-
-            if i % 5 == 0:
-                try:
-                    await status.edit_text(
-                        f"⏳ Running...\n🔢 {tran_id}\n📊 Found: {count}\n✅ {i}/{total}",
-                        reply_markup=stop_button()
-                    )
-                except:
-                    pass
-
-            # ⏱️ 2 SECOND SAFE DELAY
-            for _ in range(20):
-                if user_stop_event.get(user_id):
-                    break
-                await asyncio.sleep(0.1)
-
-    finally:
-        user_search_active[user_id] = False
+    msg = await update.message.reply_text(f"⏳ সেশন চেক করা হচ্ছে... {roll} এর ছবি খোঁজা হচ্ছে।")
+    data = get_student_and_photo(roll)
+    
+    if data:
+        caption = (
+            f"🎓 <b>BBGGC Student Details</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 <b>নাম:</b> {data['Name']}\n"
+            f"🔢 <b>রোল:</b> {data['Roll']}\n"
+            f"💰 <b>পরিমাণ:</b> {data['Amount']} BDT\n"
+            f"━━━━━━━━━━━━━━━━━━━"
+        )
+        
         try:
-            await status.delete()
+            # ছবিসহ তথ্য পাঠানো
+            await update.message.reply_photo(photo=data["Photo"], caption=caption, parse_mode="HTML")
         except:
-            pass
+            # ছবি না পেলে শুধু তথ্য
+            await update.message.reply_text(caption + "\n⚠️ ছবি সার্ভারে হাইড করা আছে।", parse_mode="HTML")
+        await msg.delete()
+    else:
+        await msg.edit_text("❌ সেশন এরর! ব্রাউজারে গিয়ে CroxyProxy থেকে নতুন লিঙ্ক কপি করে বসান।")
 
-        if user_stop_event.get(user_id):
-            await message.reply_text(f"🛑 Stopped!\n📊 Found: {count}")
-        else:
-            await message.reply_text(f"✅ Done!\n📊 Total: {count}")
-            await message.reply_text(f"👉 Next {total}?", reply_markup=next_button(total))
-
-# ----------------- HANDLER -----------------
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip()
-    user_id = update.message.from_user.id
-
-    if "-" in text:
-        try:
-            s, e = map(int, text.split("-"))
-            if (e - s + 1) > 500:
-                await update.message.reply_text("❌ Max 500 limit")
-                return
-
-            last_range[user_id] = (s, e)
-            await run_search(update.message, s, e)
-
-        except:
-            await update.message.reply_text("❌ Format: 1000-1500")
-
-    elif text.isdigit():
-        num = int(text)
-        tran_id = f"DC{num:07d}"
-
-        data, mobile = get_data(tran_id)
-
-        if data:
-            await update.message.reply_text(
-                data,
-                parse_mode="HTML",
-                reply_markup=get_buttons(mobile)
-            )
-        else:
-            await update.message.reply_text("❌ Not Found")
-
-# ----------------- CALLBACK -----------------
-async def handle_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-
-    if query.data == "stop":
-        user_stop_event[user_id] = True
-        await query.answer("🛑 Stopping...")
-        await query.edit_message_reply_markup(reply_markup=None)
-
-    elif query.data == "next":
-        await query.answer()
-        s, e = last_range.get(user_id, (0, 0))
-        diff = e - s + 1
-        new_s, new_e = e + 1, e + diff
-        last_range[user_id] = (new_s, new_e)
-
-        await query.message.reply_text(f"🔄 Next: {new_s}-{new_e}")
-        await run_search(query.message, new_s, new_e)
-
-# ----------------- RUN -----------------
-app = ApplicationBuilder().token(TOKEN).build()
-
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-app.add_handler(CallbackQueryHandler(handle_query))
-
-print("🤖 DCU BOT RUNNING...")
-app.run_polling()
+if __name__ == "__main__":
+    application = ApplicationBuilder().token(BOT_TOKEN).build()
+    application.add_handler(CommandHandler("start", lambda u, c: u.message.reply_text("রোল পাঠান।")))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_roll))
+    application.run_polling()
